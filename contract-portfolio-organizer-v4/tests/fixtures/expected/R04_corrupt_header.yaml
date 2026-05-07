@@ -1,0 +1,2 @@
+notes: Corrupt PDF header; must not crash batch; status=error expected.
+expected_status: error

@@ -1,0 +1,2 @@
+notes: Extremely long title line (reportlab truncates at draw time; parser still sees
+  via text extraction).

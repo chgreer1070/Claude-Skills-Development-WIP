@@ -1,0 +1,4 @@
+document_type: NDA
+hierarchy_role: standalone
+notes: Body text contains 'amendment'; header-first classification should still pick
+  NDA.

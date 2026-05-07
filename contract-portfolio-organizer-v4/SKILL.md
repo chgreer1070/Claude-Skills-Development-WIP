@@ -33,7 +33,12 @@ concerns—the script handles predictable, mechanical work; you focus on judgmen
 **Run the extraction script:**
 
 ```bash
-pip install pymupdf --break-system-packages
+# Use an isolated virtualenv so we never touch the system Python
+# (avoid `--break-system-packages`, which overrides PEP 668 and can
+# corrupt the user's base environment).
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install pymupdf pyyaml       # pyyaml is only needed if you run tests/
 python scripts/extract_and_classify.py --input-dir <pdf_directory> --output manifest.json --verbose
 ```
 
@@ -160,6 +165,23 @@ With clean metadata, build the relationship graph:
    ```
 
 ### Phase 5: Organize & Index
+
+**Customer folder naming — sanitize before use.** Never use an extracted
+party name as a path component directly. A customer name can contain unicode
+(`株式会社トヨタ`), path-traversal segments (`../../etc/passwd`), or clash
+with an existing folder.
+
+Before creating `portfolio/<customer>/`:
+
+1. Normalize to a slug: lowercase; ASCII-fold where possible (e.g. via
+   `unicodedata.normalize('NFKD', name).encode('ascii', 'ignore')`);
+   replace any character not in `[a-z0-9-]` with `-`; collapse consecutive
+   `-`; strip leading/trailing `-`.
+2. Reject path components: drop `.`, `..`, empty strings, and anything that
+   resolves outside `portfolio/` after `Path.resolve()`.
+3. Resolve collisions with an integer suffix (`acme`, `acme-2`, `acme-3`).
+4. Keep the canonical, unsanitized name inside `_INDEX.json` under the
+   `customer` field so presentation layers can still display the original.
 
 Create the portfolio folder structure by customer:
 
@@ -382,7 +404,8 @@ Each contract's metadata includes:
 ## Typical Workflow
 
 1. Collect all contract PDFs in a single directory
-2. Run `pip install pymupdf --break-system-packages && python scripts/extract_and_classify.py --input-dir <dir> --output manifest.json --verbose`
+2. Create a venv and install deps, then run the extractor:
+   `python3 -m venv .venv && source .venv/bin/activate && pip install pymupdf && python scripts/extract_and_classify.py --input-dir <dir> --output manifest.json --verbose`
 3. Review manifest for warnings, unknowns, near-duplicates (15–30 min for 50 contracts)
 4. Update document_type, hierarchy_role, and entity resolution in manifest (30 min–2 hours depending on complexity)
 5. Run Phase 4 linking script to build relationship graph

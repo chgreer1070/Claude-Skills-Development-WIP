@@ -6,8 +6,11 @@ A deterministic pipeline for extracting structured data from contract PDFs
 and classifying them into hierarchical roles. Handles text extraction,
 entity recognition, party extraction, date parsing, and relationship mapping.
 
-Installation:
-    pip install pymupdf difflib pytesseract
+Installation (inside a virtualenv):
+    python3 -m venv .venv && source .venv/bin/activate
+    pip install pymupdf              # required
+    pip install pytesseract          # optional: needed only for OCR fallback
+    # NOTE: `difflib` is part of the Python stdlib; do NOT `pip install` it.
 
 Usage:
     python extract_and_classify.py --input-dir ./pdfs --output manifest.json [--verbose]
@@ -57,6 +60,7 @@ TYPE_MAP = [
     (r'(?:amendment\s+no\.?\s*\d+|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty[- ]?first|twenty[- ]?second|twenty[- ]?third|twenty[- ]?fourth|twenty[- ]?fifth|twenty[- ]?sixth|twenty[- ]?seventh|twenty[- ]?eighth|twenty[- ]?ninth|thirtieth|\d+(?:st|nd|rd|th))\s+amendment|amendment\s+and\s+(?:waiver|restatement|release)|amendment\s+letter|amendment\s+no\.?\s*[a-z])', 'Amendment', 'modifier'),
     (r'amended\s+and\s+restated', 'A&R MSA', 'parent_superseding'),
     (r'(?:novation|assignment)\s+agreement|assignment\s+and\s+assumption', 'Assignment / Novation', 'modifier'),
+    (r'change\s+order|(?<!\w)modification\s+agreement(?!\w)', 'Change Order', 'modifier'),
     (r'settlement|mutual\s+release', 'Settlement / Release', 'ancillary'),
     (r'quality\s+agreement', 'Quality Agreement', 'child'),
     (r'termination\s+agreement|contract\s+termination', 'Termination Agreement', 'ancillary_terminal'),
@@ -141,16 +145,19 @@ def detect_language(text: str) -> bool:
     return english_ratio < 0.40
 
 
-def extract_title(text: str) -> Tuple[Optional[str], float, Optional[str], Optional[str]]:
+def extract_title(text: str) -> Tuple[Optional[str], float, Optional[str]]:
     """
     Extract document title from first 12 raw lines.
     Handles both ALL-CAPS and Title-Case formats.
-    
+
     Args:
         text: Full document text
-    
+
     Returns:
-        Tuple of (title, confidence, short_header, full_header)
+        Tuple of (title, confidence, short_header). `short_header` is the
+        header text up to (but not including) the preamble line that starts
+        with "This " (e.g. "This Agreement is entered into..."); if no such
+        line is seen, `short_header == title`.
     """
     lines = text.split('\n')[:12]
     empty_count = 0
@@ -213,18 +220,29 @@ def extract_title(text: str) -> Tuple[Optional[str], float, Optional[str], Optio
             break
     
     if not title_parts:
-        return None, 0.0, None, None
-    
+        return None, 0.0, None
+
     full_header = " ".join(title_parts)
-    
-    # Split into short_header (before "This ") and full_header
+
+    # short_header: header text preceding the first "This ..." preamble line
+    # in the raw scan window. The outer loop already breaks on "This " before
+    # adding to title_parts, so we must scan the raw lines again to find the
+    # true preamble boundary. If no preamble line is found within the scan
+    # window, short_header equals full_header.
     short_header = full_header
-    for part in title_parts:
-        if part.startswith("This "):
-            short_header = " ".join(title_parts[:title_parts.index(part)])
+    collected: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.lower().startswith("this "):
+            if collected:
+                short_header = " ".join(collected)
             break
-    
-    return full_header, confidence, short_header, full_header
+        if stripped in title_parts:
+            collected.append(stripped)
+
+    return full_header, confidence, short_header
 
 
 def extract_dba_aliases(text: str) -> List[Dict[str, str]]:
@@ -275,11 +293,19 @@ def extract_dates(text: str) -> Tuple[Optional[str], Optional[str], Optional[str
     term_info = None
     amendment_date = None
     
-    # Effective date patterns
+    # Effective date patterns. Order matters: the current document's own
+    # "entered into on ..." / "effective as of ..." must beat the bare
+    # "dated ..." anchor, because "dated" frequently appears inside a
+    # parent-agreement reference (e.g. "pursuant to that certain MSA dated
+    # January 15, 2020") and would otherwise hijack the effective_date of
+    # child / amendment / A&R documents.
     effective_patterns = [
         r'effective\s+(?:as\s+of\s+)?([A-Za-z]+ \d{1,2},? \d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})',
-        r'dated\s+([A-Za-z]+ \d{1,2},? \d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})',
-        r'entered\s+into\s+(?:on\s+)?([A-Za-z]+ \d{1,2},? \d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})',
+        # `entered into` may be followed by `on`, `as of`, or nothing. The
+        # baseline "is entered into as of January 15, 2020" pattern is very
+        # common in practice and previously fell through.
+        r'entered\s+into\s+(?:(?:on|as\s+of)\s+)?([A-Za-z]+ \d{1,2},? \d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})',
+        r'dated\s+(?:as\s+of\s+)?([A-Za-z]+ \d{1,2},? \d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})',
     ]
     
     for pattern in effective_patterns:
@@ -660,7 +686,7 @@ def process_pdf(pdf_path: str, input_dir: str) -> Dict[str, Any]:
         language_warning = detect_language(text)
         
         # Step 3: Extract title
-        title, title_confidence, short_header, full_header = extract_title(text)
+        title, title_confidence, short_header = extract_title(text)
         
         # Step 4: Extract DBA aliases
         dba_aliases = extract_dba_aliases(text)
