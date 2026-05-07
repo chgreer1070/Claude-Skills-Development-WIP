@@ -1,0 +1,3 @@
+notes: Spanish with English loanwords; detect_language may return False (treats as
+  English).
+expected_language_warning: true

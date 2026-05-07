@@ -1,0 +1,4 @@
+notes: Title matches both Amendment and NDA patterns. First-match-wins gives Amendment;
+  skill offers no conflict detection.
+document_type_observed_first_match: Amendment
+expected_behavior: Flag ambiguous classification

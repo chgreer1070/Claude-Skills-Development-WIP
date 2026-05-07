@@ -1,0 +1,2 @@
+notes: Title contains SVG-breaking markup. SVG renderer truncates titles to 40 chars;
+  still, no escape.

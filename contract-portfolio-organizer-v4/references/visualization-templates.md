@@ -180,7 +180,17 @@ Build a single-file HTML page. All CSS and JS must be inline. No external depend
                     row.className = 'detail-row';
                     const isFinancial = ['Contract Value', 'Liability Cap', 'Payment Terms'].includes(label);
                     const valueClass = isFinancial ? 'detail-value term' : 'detail-value';
-                    row.innerHTML = `<div class="detail-label">${label}</div><div class="${valueClass}">${value}</div>`;
+                    // Build rows with textContent (not innerHTML) so that any
+                    // angle brackets / scripts in extracted contract metadata
+                    // are rendered as text and cannot execute.
+                    const labelDiv = document.createElement('div');
+                    labelDiv.className = 'detail-label';
+                    labelDiv.textContent = label;
+                    const valueDiv = document.createElement('div');
+                    valueDiv.className = valueClass;
+                    valueDiv.textContent = String(value);
+                    row.appendChild(labelDiv);
+                    row.appendChild(valueDiv);
                     content.appendChild(row);
                 }
             });
@@ -860,25 +870,37 @@ Complete self-contained HTML5 timeline with horizontal time axis, vertical lanes
                 eventDiv.innerHTML = '<div class="event-dot"></div>';
                 eventDiv.addEventListener('mouseenter', (e) => {
                     const tooltip = document.getElementById('tooltip');
-                    tooltip.innerHTML = `
-                        <div class="tooltip-title">${event.title}</div>
-                        <div class="tooltip-row">
-                            <span class="tooltip-label">Date:</span>
-                            <span>${formatDate(event.date)}</span>
-                        </div>
-                        <div class="tooltip-row">
-                            <span class="tooltip-label">Type:</span>
-                            <span>${event.type.charAt(0).toUpperCase() + event.type.slice(1)}</span>
-                        </div>
-                        ${event.expiration_date ? `<div class="tooltip-row">
-                            <span class="tooltip-label">Expires:</span>
-                            <span>${formatDate(event.expiration_date)}</span>
-                        </div>` : ''}
-                        ${event.parties ? `<div class="tooltip-row">
-                            <span class="tooltip-label">Parties:</span>
-                            <span>${event.parties.length} party(ies)</span>
-                        </div>` : ''}
-                    `;
+                    // Rebuild tooltip using textContent-only DOM construction
+                    // so that ${event.title} and other extracted strings cannot
+                    // inject HTML/script payloads from malicious contract text.
+                    tooltip.textContent = '';
+                    const tipRow = (label, value) => {
+                        const row = document.createElement('div');
+                        row.className = 'tooltip-row';
+                        const l = document.createElement('span');
+                        l.className = 'tooltip-label';
+                        l.textContent = label;
+                        const v = document.createElement('span');
+                        v.textContent = String(value);
+                        row.appendChild(l);
+                        row.appendChild(v);
+                        return row;
+                    };
+                    const title = document.createElement('div');
+                    title.className = 'tooltip-title';
+                    title.textContent = String(event.title || '');
+                    tooltip.appendChild(title);
+                    tooltip.appendChild(tipRow('Date:', formatDate(event.date)));
+                    tooltip.appendChild(tipRow(
+                        'Type:',
+                        String(event.type || '').charAt(0).toUpperCase() + String(event.type || '').slice(1)
+                    ));
+                    if (event.expiration_date) {
+                        tooltip.appendChild(tipRow('Expires:', formatDate(event.expiration_date)));
+                    }
+                    if (event.parties) {
+                        tooltip.appendChild(tipRow('Parties:', event.parties.length + ' party(ies)'));
+                    }
                     tooltip.classList.add('visible');
                     const rect = eventDiv.getBoundingClientRect();
                     tooltip.style.left = (rect.left + 12) + 'px';
