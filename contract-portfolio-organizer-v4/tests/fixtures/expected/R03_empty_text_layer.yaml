@@ -1,0 +1,2 @@
+notes: No text layer; script should flag extraction_method=ocr_needed.
+expected_extraction_method: ocr_needed

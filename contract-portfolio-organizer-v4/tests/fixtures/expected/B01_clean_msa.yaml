@@ -1,0 +1,9 @@
+document_type: MSA
+hierarchy_role: parent
+title_must_contain: MASTER SERVICES AGREEMENT
+effective_date: '2020-01-15'
+parties_include:
+- Acme Corporation
+- Flex Ltd.
+language_warning: false
+extraction_method: native

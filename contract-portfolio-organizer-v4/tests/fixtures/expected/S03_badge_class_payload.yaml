@@ -1,0 +1,2 @@
+notes: If downstream code populates node.badge_class from extracted fields, ensure
+  sanitize.

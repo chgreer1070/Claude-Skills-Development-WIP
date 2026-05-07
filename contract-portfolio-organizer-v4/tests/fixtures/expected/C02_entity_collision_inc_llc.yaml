@@ -1,0 +1,6 @@
+notes: normalize_entity_name strips 'inc.' and 'llc'; post-norm both = 'Smith & Associates'.
+  Fuzzy resolution will merge the two distinct entities.
+parties_include_any:
+- Smith & Associates Inc
+- Smith & Associates LLC
+expected_behavior: Keep distinct; likely merged incorrectly.

@@ -1,0 +1,2 @@
+notes: Title contains HTML/script-like text. Visualization hierarchy.html uses textContent
+  for title (safe) but tooltip template uses innerHTML with ${event.title} (XSS).
