@@ -27,8 +27,8 @@ at internal periods) are documented but deferred per scope.
 | F3 | `[C5-Critical-Always-Workflow-Isolated]` | SKILL.md instructs `pip install pymupdf --break-system-packages`, overriding PEP 668 protections on the user's base Python. **Fixed.** |
 | F1+F2 | `[C2-High-Always-Annoying-Isolated]` | `extract_title` returned a 4-tuple where item 4 duplicated item 1; `short_header` detection block was dead code (outer loop already broke on `"This "`). **Fixed.** |
 | F5 | `[C5-High-Often-Workflow-Isolated]` | Phase 5 had no guidance for sanitizing customer names used as folder paths (unicode, `..`, collisions). **Fixed (doc).** |
-| H-LANG | `[C3-High-Always-Annoying-Isolated]` | 22 / 24 baseline English contracts flagged `language_warning=True` — short legalese has too few stop-word hits to clear the 40 % English-ratio threshold. **Documented, deferred.** |
-| H-MULTI | `[C2-High-Always-Workflow-Isolated]` | "by and among A, B Inc., C Ltd., and D Inc." → only 2 of 4 parties, because `[^.;:]+?` truncates at the first `.` inside `Inc.`. **Documented, deferred.** |
+| H-LANG | `[C3-High-Always-Annoying-Isolated]` | 22 / 24 baseline English contracts flagged `language_warning=True` — short legalese has too few stop-word hits to clear the 40 % English-ratio threshold. **Fixed:** `detect_language()` now uses a competing-language gate (English vs. Spanish stop-word counts) and skips detection on samples shorter than 30 words. |
+| H-MULTI | `[C2-High-Always-Workflow-Isolated]` | "by and among A, B Inc., C Ltd., and D Inc." → only 2 of 4 parties, because `[^.;:]+?` truncates at the first `.` inside `Inc.`. **Fixed:** `extract_parties()` `among` capture now stops on a true sentence-end lookahead (`.` + `\n` or `.` + capital), and the sister `between` capture drops bare `.` from its boundary alternation so `Flex Ltd.` retains its trailing period. |
 | H-DUP | `[C4-High-Often-Annoying-CrossCutting]` | At N=500 → 496 near-duplicates flagged; at N=1000 → 2480. Same-type/same-effective_date is far too permissive for a synthetic corpus and will misfire on real portfolios with seasonal contract bursts. **Documented, deferred.** |
 | H-IMPLICIT | `[C1-High-Often-Annoying-Isolated]` | Phase 4 scoring rubric in SKILL.md mentions `parent_reference match OR implicit link → 0.60` but never defines "implicit link". **Documented, deferred.** |
 | M-VER | `[C1-Medium-Always-Invisible-Isolated]` | Folder is `contract-portfolio-organizer-v4` and SKILL.md heading is "v4", but body says "v5 incorporated 22 improvements" and patch-log refers to "v5 release". Documented. |
@@ -82,14 +82,14 @@ For scale, the same generator produced 100 / 500 / 1000 PDFs in `/tmp/scale{N}/p
 
 ### Pre-fix vs post-fix
 
-| Pass | Pre-fix | Post-fix |
-|---|---|---|
-| PASS | 11 | **15** |
-| FAIL | 6 | 2 |
-| INFO (advisory; no checkable assertions) | 8 | 8 |
-| MISS (no manifest entry — should never happen for non-error fixtures) | 0 | 0 |
+| Pass | Pre-F1–F7 | Post-F1–F7 | After H-LANG + H-MULTI |
+|---|---|---|---|
+| PASS | 11 | 15 | **17** |
+| FAIL | 6 | 2 | **0** |
+| INFO (advisory; no checkable assertions) | 8 | 8 | 8 |
+| MISS (no manifest entry — should never happen for non-error fixtures) | 0 | 0 | 0 |
 
-The 4 newly-passing fixtures (B03 SOW, B04 Amendment, C06 A&R MSA, C07 Change Order) all flipped because of fixes F6 + F7.
+F1–F7 flipped B03 SOW, B04 Amendment, C06 A&R MSA, and C07 Change Order from FAIL → PASS. The follow-up H-LANG + H-MULTI patch flipped B01 (language false-positive + party-period truncation) and R05 (multi-party "by and among" truncation), taking the matrix fully green.
 
 ### Scale benchmark
 
@@ -108,7 +108,7 @@ end-of-quarter signing bursts produce many distinct same-day same-type contracts
 ### Per-fixture matrix (post-fix)
 
 ```
-B01_clean_msa                  FAIL  parties strip trailing '.'; language_warning false-positive
+B01_clean_msa                  PASS  (was FAIL: H-LANG false-positive + party period stripped)
 B02_nda                        PASS
 B03_sow                        PASS  (was FAIL: parent's date leaked in)
 B04_amendment_1                PASS  (was FAIL: parent's date leaked in)
@@ -125,7 +125,7 @@ R01_unicode_party              INFO  party preserved; folder sanitization deferr
 R02_rtl_transliteration        INFO
 R03_empty_text_layer           PASS  extraction_method=ocr_needed, no crash
 R04_corrupt_header             PASS  status=error, batch continued
-R05_multi_party_four           FAIL  2 of 4 parties due to '.' inside party name
+R05_multi_party_four           PASS  (was FAIL: H-MULTI fixed, all 4 parties captured)
 R06_dba_alias                  PASS  d/b/a captured
 R07_missing_effective_date     PASS  effective_date=None; no crash
 S01_xss_title                  INFO  raw text in manifest; rendering now safe (F4)
@@ -218,35 +218,27 @@ Note `Addendum` is intentionally still mapped to its own role (`child`) per exis
 
 ## Deferred — High & Medium
 
-### H-LANG — language false-positive on short English contracts
+### H-LANG — language false-positive on short English contracts (FIXED in follow-up)
 
 **Tag:** `[C3-High-Always-Annoying-Isolated]`
-**Evidence:** post-fix manifest shows `language_warning=True` on 22 / 24 fixtures,
-including every clean baseline. The detector counts hits against a 22-word stop
-list (`the`, `of`, `and`, …) and flags non-English when the ratio is below 0.40.
-Short legalese ("MASTER SERVICES AGREEMENT … This MSA is entered into between A
-and B …") has very low stop-word density.
+**Status:** Fixed after the F1–F7 batch. `detect_language()` now skips
+detection for samples shorter than 30 words and uses a competing-language
+gate (English vs. Spanish stop-word counts) instead of an absolute
+English-ratio threshold. C03 (Spanish legalese) still flags `True`; the
+22 baseline English fixtures that previously tripped the warning now
+report `language_warning=False`.
 
-**Recommendation:** require absolute count ≥ 5 stop-word hits *and* either ratio
-≥ 0.30 *or* a minimum word count (e.g. only run the detector on texts ≥ 200
-words). Or swap to a proper detector (`langdetect`, `lingua`).
-
-### H-MULTI — multi-party "among" regex truncates at internal periods
+### H-MULTI — multi-party "among"/`between` regex truncates at internal periods (FIXED in follow-up)
 
 **Tag:** `[C2-High-Always-Workflow-Isolated]`
-**Evidence:** R05 fixture, `scripts/extract_and_classify.py:372`:
-
-```python
-r'(?:by\s+and\s+)?among\s+([^.;:]+?)(?:\.|;|:)'
-```
-
-`[^.;:]+?` stops at `.` — so `"among A Corp, B Inc., C Ltd., and D LLC."`
-captures only `"A Corp, B Inc"` and the subsequent split sees 2 parties.
-
-**Recommendation:** consume up to a sentence terminator that is followed by a
-newline or capital sentence start, not any `.`. Or use a positive list of
-known closers (`\.\s+(?:[A-Z]|\n)`). Real-world multi-party contracts always
-hit this.
+**Status:** Fixed after the F1–F7 batch. The `among` capture switched
+from `[^.;:]+?(?:\.|;|:)` to a sentence-end lookahead
+`(?=\.\s*\n|\.\s+[A-Z]|;\s|:\s|$)` so internal abbreviation periods
+(`Inc.`, `Ltd.`) survive, and the sister `between` capture dropped the
+bare `\.` from its boundary alternation so trailing party periods are
+preserved (e.g. "Flex Ltd." stays "Flex Ltd.", not "Flex Ltd"). R05's
+"by and among A, B Inc., C Ltd., and D Ltd." now yields all four
+parties.
 
 ### H-DUP — over-permissive near-duplicate detection
 
@@ -325,8 +317,9 @@ python contract-portfolio-organizer-v4/tests/diff_expected.py \
   --manifest contract-portfolio-organizer-v4/tests/actual/manifest.json
 ```
 
-Expected output: `PASS=15 FAIL=2 INFO=8 MISS=0`. The 2 FAILs (`B01_clean_msa`,
-`R05_multi_party_four`) are the **deferred** Highs documented above.
+Expected output: `PASS=17 FAIL=0 INFO=8 MISS=0` after the H-LANG + H-MULTI
+follow-up. The two previously-deferred Highs (`B01_clean_msa`,
+`R05_multi_party_four`) are now PASS.
 
 For scale numbers, the same generator accepts `--scale N` to drop *N* additional
 synthetic PDFs into `tests/fixtures/pdfs/` (or pass `--scale-only` and a custom

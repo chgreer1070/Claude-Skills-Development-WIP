@@ -53,6 +53,18 @@ ENGLISH_KEYWORDS = {
     "from", "which", "shall", "agreement", "party", "parties"
 }
 
+# Spanish stop-word set used as a competing-language signal in
+# detect_language(). The previous absolute-ratio gate (40% English) was too
+# aggressive on short legalese, where domain nouns crowd out stop words and
+# the ratio sits in the 15-25% range even for unambiguously English text.
+# Adding more languages later (French, German, etc.) is a matter of dropping
+# in another set and extending the comparison.
+SPANISH_KEYWORDS = {
+    "que", "el", "la", "los", "las", "del", "de", "por", "para",
+    "con", "sin", "en", "y", "es", "ser", "este", "esta", "se",
+    "contrato", "partes", "celebrado", "fecha", "obliga", "cumplir",
+}
+
 # Document type classification patterns (priority order - DO NOT REORDER)
 TYPE_MAP = [
     (r'equipment\s+bailment', 'Equipment Bailment', 'child_l2'),
@@ -122,27 +134,30 @@ def extract_text_from_pdf(pdf_path: str, max_pages: int = 3) -> Tuple[str, str]:
 
 def detect_language(text: str) -> bool:
     """
-    Detect if text is primarily English.
-    
-    Args:
-        text: Text to analyze
-    
+    Detect if text is primarily non-English.
+
+    Strategy: compare stop-word hit counts across known languages and flag
+    only when a competing language *outranks* English. Short English
+    legalese is noun-heavy and historically tripped a fixed-ratio gate
+    (every clean baseline contract under 50 words got flagged), so we
+    require the non-English signal to actually be stronger rather than
+    English alone to be weak.
+
     Returns:
-        True if non-English, False if English detected
+        True if a non-English language outranks English, else False.
     """
     if not text:
         return False
-    
-    text_lower = text.lower()
-    words = re.findall(r'\b\w+\b', text_lower)
-    
-    if not words:
+
+    words = re.findall(r'\b\w+\b', text.lower())
+    if len(words) < 30:
+        # Sample is too small to make a confident call. Trusting the
+        # operator (no warning) is preferable to false-positive noise.
         return False
-    
-    english_count = sum(1 for word in words if word in ENGLISH_KEYWORDS)
-    english_ratio = english_count / len(words)
-    
-    return english_ratio < 0.40
+
+    english_count = sum(1 for w in words if w in ENGLISH_KEYWORDS)
+    spanish_count = sum(1 for w in words if w in SPANISH_KEYWORDS)
+    return spanish_count > english_count
 
 
 def extract_title(text: str) -> Tuple[Optional[str], float, Optional[str]]:
@@ -389,13 +404,26 @@ def extract_parties(text: str) -> Tuple[List[str], List[str], List[str]]:
     # Simple pattern: "between X and Y" or "by and among X, Y, and Z"
     preamble = text[:2000]  # Check first 2000 chars
     
-    # Pattern: "between X and Y"
-    between_match = re.search(r'between\s+([A-Z][^,]*?)\s+and\s+([A-Z][^,]*?)(?:\s+and|,|\.|;)', preamble, re.IGNORECASE)
+    # Pattern: "between X and Y". Boundaries are commas, semicolons, conjunctions,
+    # or end-of-text — NOT bare periods, so legal-suffix periods inside party
+    # names ("Flex Ltd.", "Globex Inc.") are preserved in the capture rather
+    # than being eaten as a delimiter.
+    between_match = re.search(
+        r'between\s+([A-Z][^,;]*?)\s+and\s+([A-Z][^,;]*?)(?:\s+and|,|;|$)',
+        preamble, re.IGNORECASE,
+    )
     if between_match:
         all_parties.extend([between_match.group(1).strip(), between_match.group(2).strip()])
     
-    # Pattern: "by and among X, Y, and Z"
-    among_match = re.search(r'(?:by\s+and\s+)?among\s+([^.;:]+?)(?:\.|;|:)', preamble, re.IGNORECASE)
+    # Pattern: "by and among X, Y, and Z". The capture is bounded by a true
+    # sentence break (period followed by newline or capital letter, or a
+    # semicolon / colon followed by whitespace) so that internal abbreviation
+    # periods inside party names like "Globex Inc." or "Initech Ltd." do not
+    # truncate the list.
+    among_match = re.search(
+        r'(?:by\s+and\s+)?among\s+(.+?)(?=\.\s*\n|\.\s+[A-Z]|;\s|:\s|$)',
+        preamble, re.IGNORECASE,
+    )
     if among_match:
         parties_text = among_match.group(1)
         parties = re.split(r',\s+and\s+|,\s+|;\s+', parties_text)
