@@ -112,3 +112,26 @@ def test_baseline_classification_smoke(manifest):
         assert c["document_type"] == expected_type, (
             f"{fname}: got document_type={c['document_type']!r}, expected {expected_type!r}"
         )
+
+
+def test_b01_no_false_language_warning(manifest):
+    """H-LANG: clean English MSA must not trip the language warning."""
+    msa = by_name(manifest, "B01_clean_msa.pdf")
+    assert msa is not None
+    assert msa["language_warning"] is False, (
+        f"B01 (clean English MSA) flagged language_warning={msa['language_warning']!r}"
+    )
+
+
+def test_r05_multi_party_four_parties(manifest):
+    """H-MULTI: 'by and among A, B Inc., C Ltd., and D Ltd.' must yield 4 parties."""
+    coop = by_name(manifest, "R05_multi_party_four.pdf")
+    assert coop is not None
+    parties = coop["parties"]["all_parties"]
+    assert len(parties) >= 4, f"R05 yielded only {len(parties)} parties: {parties}"
+    # At least one party name must preserve its trailing-period legal suffix
+    # (e.g. "Globex Inc.") — i.e. the lookahead-bounded capture didn't strip
+    # internal abbreviation periods.
+    assert any("Inc." in p or "Ltd." in p or "Co." in p for p in parties), (
+        f"R05 parties dropped abbreviation periods: {parties}"
+    )
