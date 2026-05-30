@@ -7,14 +7,11 @@ expected extraction result, so diff_expected.py can compare actual output.
 """
 
 import argparse
-import os
 from pathlib import Path
 
 import yaml
 from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 FIX_DIR = Path(__file__).resolve().parent
 PDF_DIR = FIX_DIR / "pdfs"
